@@ -96,6 +96,52 @@ public partial class UsersController : Controller
         };
     }
 
+    [HttpPut("{userId}")]
+    public IActionResult UpdateUser([FromRoute] Guid userId, [FromBody] UpdateUserDto? updateUserDto)
+    {
+        if (updateUserDto == null || userId == Guid.Empty)
+            return BadRequest();
+
+        if (string.IsNullOrWhiteSpace(updateUserDto.login))
+        {
+            return UnprocessableEntity(new { login = "Login is required" });
+        }
+
+        if (!AllowedLoginRegex.IsMatch(updateUserDto.login))
+        {
+            return UnprocessableEntity(new { login = "Invalid login" });
+        }
+
+        if (string.IsNullOrWhiteSpace(updateUserDto.firstName))
+        {
+            return UnprocessableEntity(new { firstName = "First name is required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(updateUserDto.lastName))
+        {
+            return UnprocessableEntity(new { lastName = "Last name is required" });
+        }
+
+        var user = new UserEntity(userId)
+        {
+            Login = updateUserDto.login,
+            FirstName = updateUserDto.firstName,
+            LastName = updateUserDto.lastName
+        };
+        userRepository.UpdateOrInsert(user, out var isInserted);
+
+        if (!isInserted)
+            return NoContent();
+        Response.Headers.Location = $"{Request.Path.Value?.TrimEnd('/')}";
+
+        return new ContentResult
+        {
+            Content = JsonConvert.SerializeObject(userId),
+            ContentType = "application/json; charset=utf-8",
+            StatusCode = StatusCodes.Status201Created
+        };
+    }
+
     [HttpPatch("{userId}")]
     public IActionResult PartiallyUpdateUser([FromRoute] string userId, [FromBody] List<PatchOperation>? operations)
     {
@@ -148,7 +194,7 @@ public partial class UsersController : Controller
         userRepository.Delete(userId);
         return NoContent();
     }
-    
+
     [HttpHead("{userId}")]
     public IActionResult HeadUser([FromRoute] Guid userId)
     {
@@ -160,9 +206,9 @@ public partial class UsersController : Controller
         Response.Headers.Append("Content-Type", "application/json; charset=utf-8");
         return Ok();
     }
-    
+
     [HttpGet]
-    public IActionResult GetUsersWithPagination([FromQuery] int pageSize, [FromQuery] int pageNumber = 1)
+    public IActionResult GetUsersWithPagination([FromQuery] int pageSize = 10, [FromQuery] int pageNumber = 1)
     {
         if (pageNumber <= 0) pageNumber = 1;
         if (pageSize <= PageList<UserEntity>.MinPageSize) pageSize = PageList<UserEntity>.MinPageSize;
@@ -184,21 +230,14 @@ public partial class UsersController : Controller
         
         return Ok(users);
     }
-    
+
     [HttpOptions]
     public IActionResult GetUserOptions()
     {
         Response.Headers.Append("Allow", "POST, GET, OPTIONS");
         return Ok();
     }
-    
+
     [GeneratedRegex(@"^[A-Za-z0-9_\-]+$")]
     private static partial Regex MyRegex();
-
-    public class PatchOperation
-    {
-        public string op { get; set; } = ""; 
-        public string path { get; set; } = ""; 
-        public string? value { get; set; }
-    }
 }
