@@ -57,22 +57,15 @@ public partial class UsersController : Controller
     [Produces("application/json")]
     public IActionResult CreateUser([FromBody] UserCreateDto? userCreateDto)
     {
-        var acceptHeader = Request.Headers.Accept.FirstOrDefault() ?? "*/*";
+        var acceptHeader = Request.Headers.Accept.FirstOrDefault() ?? string.Empty;
         if (acceptHeader.Contains("text/plain"))
             return StatusCode(StatusCodes.Status406NotAcceptable);
 
-        if (Request.ContentLength == 0 || userCreateDto == null)
+        if (userCreateDto == null)
             return StatusCode(StatusCodes.Status400BadRequest);
 
         if (string.IsNullOrWhiteSpace(userCreateDto.Login) || !AllowedLoginRegex.IsMatch(userCreateDto.Login))
-        {
-            userCreateDto.Login = "Login is required";
-            return UnprocessableEntity(userCreateDto);
-        }
-        if (string.IsNullOrWhiteSpace(userCreateDto.FirstName))
-            userCreateDto.FirstName = "John";
-        if (string.IsNullOrWhiteSpace(userCreateDto.LastName))
-            userCreateDto.LastName = "Doe";
+            return UnprocessableEntity(new { login  = "Login is required"});
 
         var newUser = new UserEntity(Guid.Empty)
         {
@@ -83,14 +76,13 @@ public partial class UsersController : Controller
             CurrentGameId = null
         };
         var inserted = userRepository.Insert(newUser);
-        var idString = inserted.Id.ToString();
-        Response.Headers.Location = $"{Request.Path.Value?.TrimEnd('/')}/{idString}";
+        Response.Headers.Location = $"{Request.Path.Value?.TrimEnd('/')}/{inserted.Id}";
 
         if (acceptHeader.Contains("application/xml"))
         {
             return new ContentResult
             {
-                Content = $"<guid>{idString}</guid>",
+                Content = $"<guid>{inserted.Id}</guid>",
                 ContentType = "application/xml; charset=utf-8",
                 StatusCode = StatusCodes.Status201Created
             };
@@ -98,53 +90,46 @@ public partial class UsersController : Controller
 
         return new ContentResult
         {
-            Content = JsonConvert.SerializeObject(idString),
+            Content = JsonConvert.SerializeObject(inserted.Id),
             ContentType = "application/json; charset=utf-8",
             StatusCode = StatusCodes.Status201Created
         };
     }
 
     [HttpPatch("{userId}")]
-    public IActionResult PartiallyUpdateUser([FromRoute] string userId, [FromBody] JArray? operations)
+    public IActionResult PartiallyUpdateUser([FromRoute] string userId, [FromBody] List<PatchOperation>? operations)
     {
-        if (operations == null || operations.Count == 0)
-            return BadRequest();
-        if (!Guid.TryParse(userId, out var guid))
-            return NotFound();
+        if (operations == null || operations.Count == 0) return BadRequest();
+        if (!Guid.TryParse(userId, out var guid)) return NotFound();
         var user = userRepository.FindById(guid);
         if (user == null) return NotFound();
-        foreach (var op in operations)
+        foreach (var operation in operations.Where(operation => operation.op == "replace"))
         {
-            var operation = op.ToObject<dynamic>();
-            string path = operation?.path;
-            string value = operation?.value;
-            if (operation?.op != "replace")
-                continue;
-            switch (path)
+            switch (operation.path)
             {
                 case "login":
-                    if (string.IsNullOrWhiteSpace(value) || !AllowedLoginRegex.IsMatch(value))
+                    if (string.IsNullOrWhiteSpace(operation.value) || !AllowedLoginRegex.IsMatch(operation.value))
                     {
-                        return UnprocessableEntity(new JObject { ["login"] = "Invalid login" });
+                        return UnprocessableEntity(new { login = "Invalid login" });
                     }
 
-                    user.Login = value;
+                    user.Login = operation.value;
                     break;
                 case "firstName":
-                    if (string.IsNullOrWhiteSpace(value))
+                    if (string.IsNullOrWhiteSpace(operation.value))
                     {
-                        return UnprocessableEntity(new JObject { ["firstName"] = "First name is required" });
+                        return UnprocessableEntity(new { firstName = "First name is required" });
                     }
 
-                    user.FirstName = value;
+                    user.FirstName = operation.value;
                     break;
                 case "lastName":
-                    if (string.IsNullOrWhiteSpace(value))
+                    if (string.IsNullOrWhiteSpace(operation.value))
                     {
-                        return UnprocessableEntity(new JObject { ["lastName"] = "Last name is required" });
+                        return UnprocessableEntity(new { lastName = "Last name is required" });
                     }
 
-                    user.LastName = value;
+                    user.LastName = operation.value;
                     break;
             }
         }
@@ -209,4 +194,11 @@ public partial class UsersController : Controller
     
     [GeneratedRegex(@"^[A-Za-z0-9_\-]+$")]
     private static partial Regex MyRegex();
+
+    public class PatchOperation
+    {
+        public string op { get; set; } = ""; 
+        public string path { get; set; } = ""; 
+        public string? value { get; set; }
+    }
 }
