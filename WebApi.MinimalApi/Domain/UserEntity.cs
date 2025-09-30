@@ -1,3 +1,5 @@
+using WebApi.MinimalApi.Models;
+
 namespace WebApi.MinimalApi.Domain;
 
 public class UserEntity
@@ -60,4 +62,14 @@ public class UserEntity
             CurrentGameId = null;
         }
     }
+
+    public UserDto ToDto()
+        => new()
+        {
+            Id = Id,
+            CurrentGameId = CurrentGameId,
+            Login = Login,
+            FullName = $"{FirstName} {LastName}",
+            GamesPlayed = GamesPlayed
+        };
 }
