@@ -55,55 +55,36 @@ public partial class UsersController : Controller
 
     [HttpPost] 
     [Produces("application/json")]
-    public IActionResult CreateUser([FromBody] object? body)
+    public IActionResult CreateUser([FromBody] UserCreateDto? userCreateDto)
     {
         var acceptHeader = Request.Headers.Accept.FirstOrDefault() ?? "*/*";
-        if (acceptHeader.Contains("text/plain", StringComparison.OrdinalIgnoreCase))
+        if (acceptHeader.Contains("text/plain"))
             return StatusCode(StatusCodes.Status406NotAcceptable);
 
-        if (Request.ContentLength == 0 || body == null)
+        if (Request.ContentLength == 0 || userCreateDto == null)
             return StatusCode(StatusCodes.Status400BadRequest);
 
-        JObject? jsonObj;
-        switch (body)
+        if (string.IsNullOrWhiteSpace(userCreateDto.Login) || !AllowedLoginRegex.IsMatch(userCreateDto.Login))
         {
-            case JObject jo:
-                jsonObj = jo;
-                break;
-            case JsonElement { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined }:
-                return StatusCode(StatusCodes.Status400BadRequest);
-            case JsonElement je:
-                jsonObj = JObject.Parse(je.GetRawText());
-                break;
-            default:
-                jsonObj = JObject.FromObject(body);
-                break;
+            userCreateDto.Login = "Login is required";
+            return UnprocessableEntity(userCreateDto);
         }
+        if (string.IsNullOrWhiteSpace(userCreateDto.FirstName))
+            userCreateDto.FirstName = "John";
+        if (string.IsNullOrWhiteSpace(userCreateDto.LastName))
+            userCreateDto.LastName = "Doe";
 
-        var login = jsonObj.GetValue("login")?.ToString();
-        var firstName = jsonObj.GetValue("firstName")?.ToString();
-        var lastName = jsonObj.GetValue("lastName")?.ToString();
-        
         var newUser = new UserEntity(Guid.Empty)
         {
+            Login = userCreateDto.Login,
+            FirstName = userCreateDto.FirstName,
+            LastName = userCreateDto.LastName,
             GamesPlayed = 0,
             CurrentGameId = null
         };
-
-        if (string.IsNullOrWhiteSpace(login) || !AllowedLoginRegex.IsMatch(login))
-        {
-            newUser.Login = "Login is required";
-            return UnprocessableEntity(newUser);
-        }
-        if (string.IsNullOrWhiteSpace(firstName))
-            newUser.FirstName = "John";
-        if (string.IsNullOrWhiteSpace(lastName))
-            newUser.LastName = "Doe";
-
         var inserted = userRepository.Insert(newUser);
         var idString = inserted.Id.ToString();
-        var location = $"{Request.Path.Value?.TrimEnd('/')}/{idString}";
-        Response.Headers.Location = location;
+        Response.Headers.Location = $"{Request.Path.Value?.TrimEnd('/')}/{idString}";
 
         if (acceptHeader.Contains("application/xml"))
         {
@@ -121,6 +102,55 @@ public partial class UsersController : Controller
             ContentType = "application/json; charset=utf-8",
             StatusCode = StatusCodes.Status201Created
         };
+    }
+
+    [HttpPatch("{userId}")]
+    public IActionResult PartiallyUpdateUser([FromRoute] string userId, [FromBody] JArray? operations)
+    {
+        if (operations == null || operations.Count == 0)
+            return BadRequest();
+        if (!Guid.TryParse(userId, out var guid))
+            return NotFound();
+        var user = userRepository.FindById(guid);
+        if (user == null) return NotFound();
+        foreach (var op in operations)
+        {
+            var operation = op.ToObject<dynamic>();
+            string path = operation?.path;
+            string value = operation?.value;
+            if (operation?.op != "replace")
+                continue;
+            switch (path)
+            {
+                case "login":
+                    if (string.IsNullOrWhiteSpace(value) || !AllowedLoginRegex.IsMatch(value))
+                    {
+                        return UnprocessableEntity(new JObject { ["login"] = "Invalid login" });
+                    }
+
+                    user.Login = value;
+                    break;
+                case "firstName":
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        return UnprocessableEntity(new JObject { ["firstName"] = "First name is required" });
+                    }
+
+                    user.FirstName = value;
+                    break;
+                case "lastName":
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        return UnprocessableEntity(new JObject { ["lastName"] = "Last name is required" });
+                    }
+
+                    user.LastName = value;
+                    break;
+            }
+        }
+
+        userRepository.Update(user);
+        return NoContent();
     }
 
     [HttpDelete("{userId}")]
